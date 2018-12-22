@@ -165,13 +165,11 @@ class BrowserElement {
             this.node = undefined;
         }
         if (this.subscriptions && this.subscriptions.length > 0) {
-            debugger
             for (let subscription of this.subscriptions) {
                 subscription.destroy();
             }
         }
         if (this.tagSubscriptions && this.tagSubscriptions.length > 0) {
-            debugger
             for (let tagSubscription of this.tagSubscriptions) {
                 tagSubscription.tag.unsubscribe(tagSubscription.name, this)
             }
@@ -179,7 +177,6 @@ class BrowserElement {
         this.tagSubscriptions = undefined;
         this.subscriptions = undefined;
         if (this.boundAttributes != null && this.boundAttributes.length > 0) {
-            debugger
             for (let boundAttribute of this.boundAttributes) {
                 boundAttribute.unsubscribe(this);
             }
@@ -662,7 +659,7 @@ class JJResource {
                 if (!Tag.isRegistered(dependency.name)) {
                     ready = Tag.registerAndLoad(dependency.name)
                 } else if (!Tag.isReady(dependency.name)) {
-                    ready = Tag.ready(dependency.name)
+                    ready = JJResource.loaded(dependency.name)//Tag.ready(dependency.name)
                 }
             }
             if (ready !== true) {
@@ -678,20 +675,6 @@ class JJResource {
         }
     }
     static evalJavaScript(script, resource) {
-      /*  let definitions = '';
-        let dependencies = resource.dependencies
-        if (dependencies && dependencies.length) {
-            for (let dependency of dependencies) {
-                let ready = true
-                if (dependency.type == 'object') {
-                    definitions+= "let " + dependency.name + " = JJResource.cls('"+dependency.name+"')\n" ;
-                }
-            }
-        }
-        if (definitions.length > 0) {
-            console.log(definitions)
-            eval(definitions);
-        }*/
         return eval('(' + script + ')');
     }
     static loadedJson(name,json,resolvePromise) {
@@ -740,7 +723,10 @@ class JJResource {
             JJResource.resources[name] = resObj
             let url = '/resource/' + name + '.json'
             return new Promise(function (resolvePromise, reject) {
-                let sessionItem = sessionStorage.getItem('resource_'+name)
+                let sessionItem = null;
+                if (window.cacheEnabled$ === true) {
+                    sessionStorage.getItem('resource_'+name)
+                }
                 if (sessionItem) {
                     try {
                         JJResource.loadedJson(name,JSON.parse(sessionItem),resolvePromise)
@@ -775,9 +761,15 @@ class JJResource {
         return resource
     }
     static callWithJSON(postData) {
-        return fetch("/api/call.php", {
+        let callURL = "/api/call.php"
+        if (postData.action) {
+            callURL = "/call/"+postData.resource+"/"+postData.action;
+        } else {
+            callURL = "/call/"+postData.resource
+        }
+        return fetch(callURL, {
             method: "POST",
-            body: JSON.stringify(postData),
+            body: JSON.stringify(postData.data),
             headers: {
                 'Accept': 'application/json, text/plain, */*',
                 'Content-Type': 'application/json'
@@ -806,6 +798,16 @@ class JJResource {
         let newObj = new cls()
         Object.assign(newObj, resource.configuration, params)
         return newObj
+    }
+    static ready(name) {
+        let obj = JJResource.resources[name];
+        if (obj) {
+            if (obj.status == 'downloading') {
+                return false
+            }
+            return obj
+        }
+        return false;
     }
     static loaded(name) {
         let obj = JJResource.resources[name];
@@ -850,21 +852,30 @@ class Tag {
         return eval("(" + code + ")")
     }
     load(url) {
-        if (Tag.loaded.some((v) => v == url)) {
-            return // todo return promise
+        if (Tag.loaded[url] === undefined) {
+            let loadingInfo = { url: url, promises:[] }
+            Tag.loaded[url] = loadingInfo
+            var script = document.createElement("script");
+            script.type = 'text/javascript'
+            script.src = url
+            script.onload = function() {
+                loadingInfo.loaded = true
+                for(let promiseResolveFn of loadingInfo.promises) {
+                    promiseResolveFn(true);
+                }
+            }
+            document.head.appendChild(script)
         }
+        let loadingInfo = Tag.loaded[url];
+        if (loadingInfo.loaded == true) {
+            return Promise.resolve(true)
+        } 
 
-        var script = document.createElement("script");
-        script.type = 'text/javascript'
-        script.src = url
-
-        var connected = new Promise(function (resolve) {
-            script.onload = resolve
-        })
-        Tag.loaded.push({ url: url, promise: connected })
-
-        document.head.appendChild(script)
-        return connected
+        let loadPromise = new Promise(function (resolve) {
+            loadingInfo.promises.push(resolve)
+        });
+    
+        return loadPromise
     }
     get tagName() {
         return this.tagModel.tagName;
@@ -915,7 +926,7 @@ class Tag {
                     let classNames = JJResource.classRegex.exec(implementation.javascript)
                     window[classNames[1]] = tagData.classObj
                 } catch (error) {
-                    console.error('Tag "' + tagname + '" (implementation.javascript) could not be parsed:', error)
+                    console.error('Tag "' + tagname + '" (implementation.javascript) could not be parsed:',tagData, error)
                     // link to bug, ?editor=resource=tagname&tab=implementation/javacript
                 }
             }
@@ -936,7 +947,7 @@ class Tag {
                 document.head.appendChild(css);
             }
             if (tagData.classObj === undefined) {
-                tagData.classObj = Tag; //tag with auto update of fields, etc.
+                tagData.classObj = Tag
             }
         }
         tagData.ready = true;
@@ -948,7 +959,11 @@ class Tag {
             Tag.tags[tagname] = { ready: false }
         }
         return JJResource.loaded(tagname).then(resource => {
-            return Tag.parseModelTag(resource, Tag.tags[tagname], tagname)
+            if (!Tag.tags[tagname].ready) {
+                return Tag.parseModelTag(resource, Tag.tags[tagname], tagname)
+            } else {
+                return true
+            }
         });
     }
     static getDefaults(tagname) {
@@ -1012,7 +1027,7 @@ class Tag {
         Tag.tags[tagname] = { classObj: classObj, ready: true };
     }
     publish(varname, object) {
-        Tag.publish(varname, object) //JJ.publish()
+        Tag.publish(varname, object) 
     }
     static publish(varname, object) {
         window[varname] = object;
@@ -1094,7 +1109,6 @@ class Tag {
                                 if (tag.destroyed === undefined) {
                                     let result = subscription.expression.callWithTagAndElement(tag.parentTag, tag)
                                     let code = 'tag.' + subscription.tagAttribute + ' = result'
-                                    //let code = 'subscription.tag.' + subscription.tagAttribute + ' = ' + name.replace(/tag/g, 'this');
                                     eval(code); // todo: use compiled fn
                                     tag.update('tag.' + subscription.tagAttribute); //
                                 }
@@ -1152,7 +1166,6 @@ class Expression {
                 definitions += 'let ' + alias.varname + " = " + alias.expression + "\n"
             }
         }
-        
 		if (options.tagAndvalue) {
 			code = '(function(tag,value) { ' + definitions + ' ' + this.expression + ' })';
         } else if (options.returnVoid) {
@@ -1166,7 +1179,6 @@ class Expression {
             console.error('Expresssion: parseExpression failed', code, error)
             this.fn = eval('(function() {return false})')
         }
-
     }
     parseSubscriptions(expression) {
         let expressionParts = matchAll(expression);
@@ -1445,9 +1457,7 @@ class EventAttribute extends Attribute {
     destroy() {
         this.expression = null;
     }
-    renderAttribute(browserElement) {
-        /* do nothing */
-    }
+    renderAttribute(browserElement) {}
 }
 class ModelAttribute extends Attribute {
     parse(options) {
@@ -1505,20 +1515,7 @@ class ForAttribute extends Attribute {
         options.aliases.push({ varname: options.currentForIndex, expression: idxexpr, replaceForSubscription: true });
         options.aliases.push({ varname: variable, expression: expression });
     }
-    /*removeSubelements(browserElement, newLength) {
-        let brChildren = browserElement.children
-        for (let i = brChildren.length - 1; i >= 0; i--) {
-            let child = brChildren[i];
-            if (child.forIdx[this.collection] > (newLength - 1)) {
-                child.destroy(); 
-                brChildren.splice(i, 1)
-            } else {
-                break;
-            }
-        }
-        let lastEl = brChildren[brChildren.length - 1];
-        return lastEl ? lastEl.forIdx[this.collection] + 1 : 0;
-    }*/
+
     renderAttribute(browserElement, options) {
         
         options.ignoreThis = true
@@ -1646,6 +1643,7 @@ class IncludeTag extends Tag {
         }
         return browserElement
     }
+    
     set tag(tag) {
         if (!tag || tag.toLowerCase() == this._tag) {
             return;
@@ -1662,9 +1660,6 @@ class IncludeTag extends Tag {
         if (this.renderedTag && this.renderedTag.tag) {
             Object.assign(this.renderedTag.tag,a)
         }
-        /*if (this.browserElement) {//don't include multiple times
-            this.render(this.browserElement);
-        }*/
     }
     get attributes() {
         return this._attributes
