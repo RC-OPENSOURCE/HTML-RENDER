@@ -695,6 +695,8 @@ class JJResource {
                 }
             }
             resource.status = 'ready'
+            //resource.ready = true
+            
             let waitingResolved = false
             if (resource.classObj != undefined && resource.classObj.initialize != undefined) {
                 
@@ -761,7 +763,7 @@ class JJResource {
         return resource
     }
     static callWithJSON(postData) {
-        let callURL = "/api/call.php"
+        let callURL = "/resource-manager/call.php"
         if (postData.action) {
             callURL = "/call/"+postData.resource+"/"+postData.action;
         } else {
@@ -851,7 +853,7 @@ class Tag {
     eval(code, element) {
         return eval("(" + code + ")")
     }
-    load(url) {
+    static load(url) {
         if (Tag.loaded[url] === undefined) {
             let loadingInfo = { url: url, promises:[] }
             Tag.loaded[url] = loadingInfo
@@ -864,7 +866,7 @@ class Tag {
                     promiseResolveFn(true);
                 }
             }
-            document.head.appendChild(script)
+            document.body.appendChild(script)
         }
         let loadingInfo = Tag.loaded[url];
         if (loadingInfo.loaded == true) {
@@ -1007,7 +1009,7 @@ class Tag {
     }
     static register(tagname) {
         if (!Tag.tags[tagname]) {
-            let url = '/api/resource.php?name=' + tagname
+            let url = '/resource-manager/resource.php?name=' + tagname
             Tag.tags[tagname] = { url: url, ready: false }
         }
     }
@@ -1214,16 +1216,19 @@ class Expression {
         } else if (expression.includes('{') || (options.textcontext === true)) {
             expression = Expression.convertToJavaScript(expression, options, this);
         } else {
-            expression = Expression.processJscontext(expression, options)
+            expression = Expression.processJscontext(expression, options) // ?
             this.parseSubscriptions(expression)
         }
         return expression;
     }
     static processJscontext(expr, options) {
-        expr = expr.replace(/ and /g, ' && ');
-        expr = expr.replace(/ or /g, ' || ');
-        expr = expr.replace(/ then /g, ' && ');
-        expr = expr.replace(/this/g, 'tag');
+        if (!expr.startsWith('{') && !expr.startsWith('[')) {//?
+        
+            expr = expr.replace(/ and /g, ' && ');
+            expr = expr.replace(/ or /g, ' || ');
+            expr = expr.replace(/ then /g, ' && ');
+            expr = expr.replace(/this/g, 'tag');
+        }
         return expr;
     }
     static convertToJavaScript(expression, options, addSubscriptions = null) {
@@ -1623,7 +1628,6 @@ class LinkAttribute extends Attribute {
     render(node, value, browserElement) {
         browserElement.link = value;
     }
-
 }
 Attribute.registerAttribute('link', LinkAttribute);
 class IncludeTag extends Tag {
